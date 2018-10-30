@@ -103,7 +103,17 @@ void Labwork::labwork1_CPU() {
 }
 
 void Labwork::labwork1_OpenMP() {
-
+    int pixelCount = inputImage->width * inputImage->height;
+    outputImage = static_cast<char *>(malloc(pixelCount * 3));
+    #pragma omp parallel for
+    for (int j = 0; j < 100; j++) {             // let's do it 100 times, otherwise it's too fast!
+        for (int i = 0; i < pixelCount; i++) {
+            outputImage[i * 3] = (char) (((int) inputImage->buffer[i * 3] + (int) inputImage->buffer[i * 3 + 1] +
+                                          (int) inputImage->buffer[i * 3 + 2]) / 3);
+            outputImage[i * 3 + 1] = outputImage[i * 3];
+            outputImage[i * 3 + 2] = outputImage[i * 3];
+        }
+    }
 }
 
 int getSPcores(cudaDeviceProp devProp) {
@@ -133,7 +143,21 @@ int getSPcores(cudaDeviceProp devProp) {
 }
 
 void Labwork::labwork2_GPU() {
-    
+    int c = 0;
+    int numberOfCores = 0;
+    cudaDeviceProp properties;
+    cudaGetDeviceCount(&numberOfCores);
+    printf("There is %d cores in our machine\n", numberOfCores);
+    /*while (properties.name[c] != '\0') {
+      printf("%c", properties.name[c]);
+      c++;
+    }
+    printf("\n");*/
+    for (int i=0; i<numberOfCores; i++){
+        cudaGetDeviceProperties(&properties, i);
+        printf("- For the device %d that is called %s \n The clockrate is of %d kHz \n The warp size in threads is of %d\n This device has %d multiprocessors\n The memory clockrate is of %d kHz\n The memory bus width is of %d bits\n", i, properties.name, properties.clockRate, properties.warpSize, properties.multiProcessorCount, properties.memoryClockRate, properties.memoryBusWidth);
+
+    }     
 }
 
 void Labwork::labwork3_GPU() {
