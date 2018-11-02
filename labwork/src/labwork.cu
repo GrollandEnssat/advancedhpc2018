@@ -213,6 +213,39 @@ void Labwork::labwork4_GPU() {
    cudaFree(devGray);   
 }
 
+__global__ void gauss(uchar3 *input, uchar3 *output) {
+   int tidx = threadIdx.x + blockIdx.x * blockDim.x;
+   int tidy = threadIdx.y + blockIdx.y * blockDim.y;
+   int kernel[] = { 0, 0, 1, 2, 1, 0, 0,  
+                     0, 3, 13, 22, 13, 3, 0,  
+                     1, 13, 59, 97, 59, 13, 1,  
+                     2, 22, 97, 159, 97, 22, 2,  
+                     1, 13, 59, 97, 59, 13, 1,  
+                     0, 3, 13, 22, 13, 3, 0,
+                     0, 0, 1, 2, 1, 0, 0 };
+   int sum = 0;
+   int c = 0;
+   for (int y = -3; y <= 3; y++) {
+       for (int x = -3; x <= 3; x++) {
+           int i = tidx + x;
+           int j = tidy + y;
+           if (i < 0) continue;
+           if (i >= blockDim.x) continue;
+           if (j < 0) continue;
+           if (j >= blockDim.y) continue; 
+           int tid = j * blockDim.x + i;
+           unsigned char gray = (input[tid].x + input[tid].y + input[tid].z)/3;
+           int coefficient = kernel[(y+3) * 7 + x + 3];
+           sum = sum + gray * coefficient;
+           c += coefficient;
+      }
+      sum /= c;
+      int posOut = tidy * blockDim.x + tidx;
+      output[posOut].x = output[posOut].y = output[posOut].z = sum;
+  }
+   
+}
+
 // CPU implementation of Gaussian Blur
 void Labwork::labwork5_CPU() {
     int kernel[] = { 0, 0, 1, 2, 1, 0, 0,  
@@ -251,6 +284,24 @@ void Labwork::labwork5_CPU() {
 }
 
 void Labwork::labwork5_GPU() {
+   uchar3 *devInput;
+   uchar3 * devGauss;
+   int pixelCount = inputImage->width * inputImage->height;
+   dim3 gridSize = dim3(16, 16);
+   dim3 blockSize = dim3(4096, 4096);
+   outputImage = static_cast<char *>(malloc(pixelCount * 3));
+   cudaMalloc(&devInput, pixelCount * sizeof(uchar3));
+   cudaMalloc(&devGauss, pixelCount * sizeof(uchar3));
+   cudaMemcpy(devInput, inputImage->buffer,
+   pixelCount * sizeof(uchar3),
+   cudaMemcpyHostToDevice);
+   gauss<<<gridSize, blockSize>>>(
+   devInput, devGauss);
+   cudaMemcpy(outputImage, devGauss,
+   pixelCount * sizeof(uchar3),
+   cudaMemcpyDeviceToHost);
+   cudaFree(devInput);
+   cudaFree(devGauss);   
     
 }
 
