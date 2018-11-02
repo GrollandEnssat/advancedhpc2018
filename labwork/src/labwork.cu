@@ -223,8 +223,8 @@ __global__ void gauss(uchar3 *input, uchar3 *output, int height, int width) {
                      1, 13, 59, 97, 59, 13, 1,  
                      0, 3, 13, 22, 13, 3, 0,
                      0, 0, 1, 2, 1, 0, 0 };
-   if (tidx>height){return;}
-   if (tidy>width){return;}
+   if (tidx>=height){return;}
+   if (tidy>=width){return;}
    int sum = 0;
    int c = 0;
    for (int y = -3; y <= 3; y++) {
@@ -289,8 +289,8 @@ void Labwork::labwork5_GPU() {
    uchar3 *devInput;
    uchar3 * devGauss;
    int pixelCount = inputImage->width * inputImage->height;
-   int blockSize = 32;
-   int gridSize = (inputImage->height / blockSize) + (inputImage->width / blockSize);
+   dim3 gridSize = dim3((inputImage->width)/32, (inputImage->height)/32);
+   dim3 blockSize = dim3(32, 32);
    outputImage = static_cast<char *>(malloc(pixelCount * 3));
    cudaMalloc(&devInput, pixelCount * sizeof(uchar3));
    cudaMalloc(&devGauss, pixelCount * sizeof(uchar3));
