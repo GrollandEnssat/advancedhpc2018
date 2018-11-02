@@ -54,7 +54,9 @@ int main(int argc, char **argv) {
         case 5:
             labwork.labwork5_CPU();
             labwork.saveOutputImage("labwork5-cpu-out.jpg");
+            timer.start();
             labwork.labwork5_GPU();
+	    printf("labwork 5 GPU ellapsed %.1fms\n", timer.getElapsedTimeInMilliSec());
             labwork.saveOutputImage("labwork5-gpu-out.jpg");
             break;
         case 6:
@@ -213,7 +215,7 @@ void Labwork::labwork4_GPU() {
    cudaFree(devGray);   
 }
 
-__global__ void gauss(uchar3 *input, uchar3 *output, int height, int width) {
+__global__ void gauss_unshared(uchar3 *input, uchar3 *output, int height, int width) {
    int tidx = threadIdx.x + blockIdx.x * blockDim.x;
    int tidy = threadIdx.y + blockIdx.y * blockDim.y;
    int kernel[] = { 0, 0, 1, 2, 1, 0, 0,  
@@ -223,8 +225,8 @@ __global__ void gauss(uchar3 *input, uchar3 *output, int height, int width) {
                      1, 13, 59, 97, 59, 13, 1,  
                      0, 3, 13, 22, 13, 3, 0,
                      0, 0, 1, 2, 1, 0, 0 };
-   if (tidx>=height){return;}
-   if (tidy>=width){return;}
+   if (tidx>=width){return;}
+   if (tidy>=height){return;}
    int sum = 0;
    int c = 0;
    for (int y = -3; y <= 3; y++) {
@@ -297,7 +299,7 @@ void Labwork::labwork5_GPU() {
    cudaMemcpy(devInput, inputImage->buffer,
    pixelCount * sizeof(uchar3),
    cudaMemcpyHostToDevice);
-   gauss<<<gridSize, blockSize>>>(
+   gauss_unshared<<<gridSize, blockSize>>>(
    devInput, devGauss, inputImage->height, inputImage->width);
    cudaMemcpy(outputImage, devGauss,
    pixelCount * sizeof(uchar3),
