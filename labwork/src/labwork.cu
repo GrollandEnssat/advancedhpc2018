@@ -213,7 +213,7 @@ void Labwork::labwork4_GPU() {
    cudaFree(devGray);   
 }
 
-__global__ void gauss(uchar3 *input, uchar3 *output) {
+__global__ void gauss(uchar3 *input, uchar3 *output, int height, int width) {
    int tidx = threadIdx.x + blockIdx.x * blockDim.x;
    int tidy = threadIdx.y + blockIdx.y * blockDim.y;
    int kernel[] = { 0, 0, 1, 2, 1, 0, 0,  
@@ -223,6 +223,8 @@ __global__ void gauss(uchar3 *input, uchar3 *output) {
                      1, 13, 59, 97, 59, 13, 1,  
                      0, 3, 13, 22, 13, 3, 0,
                      0, 0, 1, 2, 1, 0, 0 };
+   if (tidx>height){return;}
+   if (tidy>width){return;}
    int sum = 0;
    int c = 0;
    for (int y = -3; y <= 3; y++) {
@@ -230,17 +232,17 @@ __global__ void gauss(uchar3 *input, uchar3 *output) {
            int i = tidx + x;
            int j = tidy + y;
            if (i < 0) continue;
-           if (i >= blockDim.x) continue;
+           if (i >= width) continue;
            if (j < 0) continue;
-           if (j >= blockDim.y) continue; 
-           int tid = j * blockDim.x + i;
+           if (j >= height) continue; 
+           int tid = j * width + i;
            unsigned char gray = (input[tid].x + input[tid].y + input[tid].z)/3;
            int coefficient = kernel[(y+3) * 7 + x + 3];
            sum = sum + gray * coefficient;
            c += coefficient;
       }
       sum /= c;
-      int posOut = tidy * blockDim.x + tidx;
+      int posOut = tidy * width + tidx;
       output[posOut].x = output[posOut].y = output[posOut].z = sum;
   }
    
@@ -296,7 +298,7 @@ void Labwork::labwork5_GPU() {
    pixelCount * sizeof(uchar3),
    cudaMemcpyHostToDevice);
    gauss<<<gridSize, blockSize>>>(
-   devInput, devGauss);
+   devInput, devGauss, inputImage->height, inputImage->width);
    cudaMemcpy(outputImage, devGauss,
    pixelCount * sizeof(uchar3),
    cudaMemcpyDeviceToHost);
