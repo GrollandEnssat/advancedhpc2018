@@ -5,6 +5,7 @@
 
 #define ACTIVE_THREADS 4
 
+
 int main(int argc, char **argv) {
     printf("USTH ICT Master 2018, Advanced Programming for HPC.\n");
     if (argc < 2) {
@@ -85,6 +86,7 @@ int main(int argc, char **argv) {
 
 void Labwork::loadInputImage(std::string inputFileName) {
     inputImage = jpegLoader.load(inputFileName);
+    
 }
 
 void Labwork::saveOutputImage(std::string outputFileName) {
@@ -145,7 +147,7 @@ int getSPcores(cudaDeviceProp devProp) {
 }
 
 void Labwork::labwork2_GPU() {
-    int c = 0;
+    //int c = 0;
     int numberOfCores = 0;
     cudaDeviceProp properties;
     cudaGetDeviceCount(&numberOfCores);
@@ -162,6 +164,8 @@ void Labwork::labwork2_GPU() {
     }     
 }
 
+
+//----------------------------------------------------------------------
 
 __global__ void grayscale(uchar3 *input, uchar3 *output) {
    int tid = threadIdx.x + blockIdx.x * blockDim.x;
@@ -189,31 +193,44 @@ void Labwork::labwork3_GPU() {
    cudaMemcpyDeviceToHost);
    cudaFree(devInput);
    cudaFree(devGray);
+}
 
 
-   
+//-----------------------------------------------------------------------
+
+__global__ void grayscale2D(uchar3 *input, uchar3 *output, int width) {
+   int tidx = threadIdx.x + blockIdx.x * blockDim.x;
+   int tidy = threadIdx.y + blockIdx.y * blockDim.y;
+   int tid = tidy * width + tidx;
+   output[tid].x = (input[tid].x + input[tid].y +
+   input[tid].z) / 3;
+   output[tid].z = output[tid].y = output[tid].x;
 }
 
 void Labwork::labwork4_GPU() {
    uchar3 *devInput;
    uchar3 * devGray;
+   int width = inputImage->width;
    int pixelCount = inputImage->width * inputImage->height;
-   dim3 gridSize = dim3(16, 16);
-   dim3 blockSize = dim3(4096, 4096);
+   dim3 gridSize = dim3((inputImage->width)/32, (inputImage->height)/32);
+   dim3 blockSize = dim3(32, 32);
    outputImage = static_cast<char *>(malloc(pixelCount * 3));
    cudaMalloc(&devInput, pixelCount * sizeof(uchar3));
    cudaMalloc(&devGray, pixelCount * sizeof(uchar3));
    cudaMemcpy(devInput, inputImage->buffer,
    pixelCount * sizeof(uchar3),
    cudaMemcpyHostToDevice);
-   grayscale<<<gridSize, blockSize>>>(
-   devInput, devGray);
+   grayscale2D<<<gridSize, blockSize>>>(
+   devInput, devGray, width);
    cudaMemcpy(outputImage, devGray,
    pixelCount * sizeof(uchar3),
    cudaMemcpyDeviceToHost);
    cudaFree(devInput);
    cudaFree(devGray);   
 }
+
+
+//------------------------------------------------------------------------
 
 __global__ void gauss_unshared(uchar3 *input, uchar3 *output, int height, int width) {
    int tidx = threadIdx.x + blockIdx.x * blockDim.x;
@@ -243,10 +260,10 @@ __global__ void gauss_unshared(uchar3 *input, uchar3 *output, int height, int wi
            sum = sum + gray * coefficient;
            c += coefficient;
       }
-      sum /= c;
-      int posOut = tidy * width + tidx;
-      output[posOut].x = output[posOut].y = output[posOut].z = sum;
   }
+  sum /= c;
+  int posOut = tidy * width + tidx;
+  output[posOut].x = output[posOut].y = output[posOut].z = sum;
    
 }
 
@@ -309,20 +326,370 @@ void Labwork::labwork5_GPU() {
     
 }
 
+
+//------------------------------------------------------------------
+
+
+
+__global__ void brightness(uchar3 *input, uchar3 *output, int width, int increase) {
+   int tidx = threadIdx.x + blockIdx.x * blockDim.x;
+   int tidy = threadIdx.y + blockIdx.y * blockDim.y;
+   int tid = tidy * width + tidx;
+   int newValuex = input[tid].x + increase;
+   int newValuey = input[tid].y + increase;
+   int newValuez = input[tid].z + increase;
+
+   if (newValuex>0){
+      output[tid].x = min(newValuex, 255);
+   } else {
+      output[tid].x = 0;
+   }
+
+   if (newValuey>0){
+      output[tid].y = min(newValuey, 255);
+   } else {
+      output[tid].y = 0;
+   }
+
+   if (newValuez>0){
+      output[tid].z = min(newValuez, 255);
+   } else {
+      output[tid].z = 0;
+   }
+}
+
+__global__ void binarization(uchar3 *input, uchar3 *output, int width, int t) {
+   int tidx = threadIdx.x + blockIdx.x * blockDim.x;
+   int tidy = threadIdx.y + blockIdx.y * blockDim.y;
+   int tid = tidy * width + tidx;
+   if (((input[tid].x + input[tid].y + input[tid].z )/3) < t){
+      output[tid].x = output[tid].y = output[tid].z = 0;
+   } else {
+      output[tid].x = output[tid].y = output[tid].z = 255;
+   }
+}
+
+__global__ void blending(uchar3 *input1, uchar3 *input2, uchar3 *output, int width, int c) {
+   int tidx = threadIdx.x + blockIdx.x * blockDim.x;
+   int tidy = threadIdx.y + blockIdx.y * blockDim.y;
+   int tid = tidy * width + tidx;
+   output[tid].x = output[tid].y = output[tid].z = c*input1[tid].x + (1-c)*input2[tid].x;
+}
+
+
 void Labwork::labwork6_GPU() {
+   uchar3 *devInput;
+   uchar3 * devMap;
+   int t = 150;
+   int pixelCount = inputImage->width * inputImage->height;
+   dim3 gridSize = dim3((inputImage->width)/32, (inputImage->height)/32);
+   dim3 blockSize = dim3(32, 32);
+   outputImage = static_cast<char *>(malloc(pixelCount * 3));
+   cudaMalloc(&devInput, pixelCount * sizeof(uchar3));
+   cudaMalloc(&devMap, pixelCount * sizeof(uchar3));
+   cudaMemcpy(devInput, inputImage->buffer,
+   pixelCount * sizeof(uchar3),
+   cudaMemcpyHostToDevice);
+   binarization<<<gridSize, blockSize>>>(
+   devInput, devMap, inputImage->width, t);
+   cudaMemcpy(outputImage, devMap,
+   pixelCount * sizeof(uchar3),
+   cudaMemcpyDeviceToHost);
+   cudaFree(devInput);
+   cudaFree(devMap);   
 
 }
 
-void Labwork::labwork7_GPU() {
+//------------------------------------------------------------------
 
+extern __shared__ int cache[];
+
+__global__ void reduceFinalMin(uchar3 *in, int *out, int width) {
+   // dynamic shared memory size, allocated in host
+   // cache the block content
+   unsigned int localtid = threadIdx.x;
+   int tidx = threadIdx.x + blockIdx.x* 2 * blockDim.x;
+   int tidy = threadIdx.y + blockIdx.y* 2 * blockDim.y;
+   int tid = tidy * width + tidx;
+   //unsigned int tid = threadIdx.x+blockIdx.x*2*blockDim.x;
+   if ( in[tid].x < in[tid + blockDim.x].x ) {
+      cache[localtid] = in[tid].x;
+   } else {
+      cache[localtid] = in[tid + blockDim.x].x;
+   }
+   __syncthreads();
+   // reduction in cache
+   for (int s = blockDim.x / 2; s > 0; s /= 2) {
+      if (localtid < s) {
+         if (cache[localtid] > cache[localtid + s]){
+            cache[localtid] = cache[localtid + s];
+         } //else : cache[localtid] = cache[localtid], no need to code it
+      }
+      __syncthreads();
+   }
+   // only first thread writes back
+   if (localtid == 0) {*out = cache[0];}
+}
+
+
+__global__ void reduceFinalMax(uchar3 *in, int *out, int width) {
+   // dynamic shared memory size, allocated in host
+
+   // cache the block content
+   unsigned int localtid = threadIdx.x;
+   int tidx = threadIdx.x + blockIdx.x* 2 * blockDim.x;
+   int tidy = threadIdx.y + blockIdx.y* 2 * blockDim.y;
+   int tid = tidy * width + tidx;
+   //unsigned int tid = threadIdx.x+blockIdx.x*2*blockDim.x;
+   if ( in[tid].x > in[tid + blockDim.x].x ) {
+      cache[localtid] = in[tid].x;
+   } else {
+      cache[localtid] = in[tid + blockDim.x].x;
+   }
+   __syncthreads();
+   // reduction in cache
+   for (int s = blockDim.x / 2; s > 0; s /= 2) {
+      if (localtid < s) {
+         if (cache[localtid] < cache[localtid + s]){
+            cache[localtid] = cache[localtid + s];
+         } //else : cache[localtid] = cache[localtid], no need to code it
+      }
+      __syncthreads();
+   }
+   // only first thread writes back
+   if (localtid == 0) {*out = cache[0];}
+}
+
+__global__ void grayscaleStretch(uchar3 *input, uchar3 *output, int min, int max, int width) {
+   int tidx = threadIdx.x + blockIdx.x * blockDim.x;
+   int tidy = threadIdx.y + blockIdx.y * blockDim.y;
+   int tid = tidy * width + tidx;
+   output[tid].x = ((input[tid].x - min) / (max-min))*255 ; 
+//We know our picture is in gray scale, so x=y=z, we just have to use x.
+   output[tid].z = output[tid].y = output[tid].x;
+}
+
+
+void Labwork::labwork7_GPU() {
+   uchar3 *devInput;
+   uchar3 * devGrayStretch;
+   int min;
+   int max;
+   int pixelCount = inputImage->width * inputImage->height;
+   int width = inputImage->width;
+   dim3 gridSize = dim3((inputImage->width)/16, (inputImage->height)/16);
+   dim3 blockSize = dim3(16, 16);
+   outputImage = static_cast<char *>(malloc(pixelCount * 3));
+   cudaMalloc(&devInput, pixelCount * sizeof(uchar3));
+   cudaMalloc(&devGrayStretch, pixelCount * sizeof(uchar3));
+   cudaMemcpy(devInput, inputImage->buffer,
+   pixelCount * sizeof(uchar3),
+   cudaMemcpyHostToDevice);
+   grayscale2D<<<gridSize, blockSize>>>(
+   devInput, devGrayStretch, width);
+   reduceFinalMax<<<gridSize, blockSize>>>(
+   devInput, &max, width);
+   reduceFinalMin<<<gridSize, blockSize>>>(
+   devInput, &min, width);
+   grayscaleStretch<<<gridSize, blockSize>>>(
+   devInput, devGrayStretch, min, max, width);
+   cudaMemcpy(outputImage, devGrayStretch,
+   pixelCount * sizeof(uchar3),
+   cudaMemcpyDeviceToHost);
+   cudaFree(devInput);
+   cudaFree(devGrayStretch);   
+
+}
+
+
+//--------------------------------------------------------------------
+
+__global__ void RGB2HSV(uchar3 *input, float *outH, float *outS, float *outV,int width){
+   int tidx = threadIdx.x + blockIdx.x * blockDim.x;
+   int tidy = threadIdx.y + blockIdx.y * blockDim.y;
+   int tid = tidy * width + tidx;
+   int max;
+   int min;
+   int delta;
+   float r = input[tid].x / 255;
+   float g = input[tid].y / 255;
+   float b = input[tid].z / 255;
+   if (r>g && r>b){
+      max = r;
+      if (b>g){
+         min = g;
+      } else {
+         min = b;
+      }
+   } else if (g>b){
+      max = g;
+      if (b>r){
+         min = r;
+      } else {
+         min = b;
+      }
+   } else {
+      max = b;
+      if (g>r){
+         min = r;
+      } else {
+         min = g;
+      }
+   }
+
+   delta = max - min;
+
+   outV[tid] = max;
+
+   if (delta == 0){
+      outH[tid] = 0;
+   } else {
+      if (max == r){
+         outH[tid] = float(60 * (int((g-b)/delta) % 6));
+      } else if (max == g){
+         outH[tid] = 60 * (((b-r)/delta) + 2);
+      } else if (max == b){
+         outH[tid] = 60 * (((r-g)/delta) + 4);
+      }
+   }
+   if (max == 0){
+      outS[tid] = 0;
+   } else {
+      outS[tid] = delta/max;
+   }
+}
+
+__global__ void HSV2RGB(uchar3 *output, float *inH, float *inS, float *inV, int width){
+   int tidx = threadIdx.x + blockIdx.x * blockDim.x;
+   int tidy = threadIdx.y + blockIdx.y * blockDim.y;
+   int tid = tidy * width + tidx;
+   float h = inH[tid];
+   float s = inS[tid];
+   float v = inV[tid];
+   float d = h/60;
+   float l = v * (1 - s);
+   int hi = int(d) % 6;
+   float f = d - hi;
+   float m = v * (1 - f * s);
+   float n = v * (1 - (1 - f) * s);
+   if (h<60 && h>=0){
+      output[tid].x = v;
+      output[tid].y = n;
+      output[tid].z = l;
+   } else if (h<120 && h>=60){
+      output[tid].x = m;
+      output[tid].y = v;
+      output[tid].z = l;
+   } else if (h<180 && h>=120){
+      output[tid].x = l;
+      output[tid].y = v;
+      output[tid].z = n;
+   } else if (h<240 && h>=180){
+      output[tid].x = l;
+      output[tid].y = m;
+      output[tid].z = v;
+   } else if (h<300 && h>=240){
+      output[tid].x = n;
+      output[tid].y = l;
+      output[tid].z = v;
+   } else if (h<360 && h>=300){
+      output[tid].x = v;
+      output[tid].y = l;
+      output[tid].z = m;
+   }
+   output[tid].x = int(output[tid].x*255);
+   output[tid].y = int(output[tid].y*255);
+   output[tid].z = int(output[tid].z*255);
 }
 
 void Labwork::labwork8_GPU() {
-
+   uchar3 *devInput;
+   uchar3 * devOutput;
+   float * devH;
+   float * devS;
+   float * devV;
+   int pixelCount = inputImage->width * inputImage->height;
+   dim3 gridSize = dim3((inputImage->width)/32, (inputImage->height)/32);
+   dim3 blockSize = dim3(32, 32);
+   outputImage = static_cast<char *>(malloc(pixelCount * 3));
+   cudaMalloc(&devInput, pixelCount * sizeof(uchar3));
+   cudaMalloc(&devOutput, pixelCount * sizeof(uchar3));
+   cudaMalloc(&devH, pixelCount * sizeof(float));
+   cudaMalloc(&devS, pixelCount * sizeof(float));
+   cudaMalloc(&devV, pixelCount * sizeof(float));
+   cudaMemcpy(devInput, inputImage->buffer,
+   pixelCount * sizeof(uchar3),
+   cudaMemcpyHostToDevice);
+   RGB2HSV<<<gridSize, blockSize>>>(
+   devInput, devH, devS, devV, inputImage->width);
+   HSV2RGB<<<gridSize, blockSize>>>(
+   devOutput, devH, devS, devV, inputImage->width);
+   cudaMemcpy(outputImage, devOutput,
+   pixelCount * sizeof(uchar3),
+   cudaMemcpyDeviceToHost);
+   cudaFree(devInput);
+   cudaFree(devOutput);  
 }
 
-void Labwork::labwork9_GPU() {
+//----------------------------------------------------------------------------
 
+__global__ void histogramMaker(uchar3 *input, int *values, int width) {
+   int tidx = threadIdx.x + blockIdx.x * blockDim.x;
+   int tidy = threadIdx.y + blockIdx.y * blockDim.y;
+   int tid = tidy * width + tidx;
+   values[input[tid].x]+=1; //We have a gray image so x=y=z
+}
+
+__global__ void equalization(int *hist, int *eqHist, int n) {
+   int c[255];
+   int p[255];
+   for (int i=0; i<255; i++){
+      p[i] = hist[i]/n;
+   }
+   for (int i=0; i<255; i++){
+      for (int j=0; j<=i; j++){
+          c[i]+=p[j];
+      }
+      eqHist[i] = c[i]*255;
+   }
+}
+
+
+void Labwork::labwork9_GPU() {
+   uchar3 *devInput;
+   uchar3 * devGray;
+   uchar3 * devOutput;
+   int hist[255];
+   int eqHist[255];
+   int pixelCount = inputImage->width * inputImage->height;
+   int width = inputImage->width;
+   dim3 gridSize = dim3((inputImage->width)/32, (inputImage->height)/32);
+   dim3 blockSize = dim3(32, 32);
+   outputImage = static_cast<char *>(malloc(pixelCount * 3));
+   cudaMalloc(&devInput, pixelCount * sizeof(uchar3));
+   cudaMalloc(&devGray, pixelCount * sizeof(uchar3));
+   cudaMalloc(&devOutput, pixelCount * sizeof(uchar3));
+   cudaMemcpy(devInput, inputImage->buffer,
+   pixelCount * sizeof(uchar3),
+   cudaMemcpyHostToDevice);
+   grayscale2D<<<gridSize, blockSize>>>(
+   devInput, devGray, width);
+   histogramMaker<<<gridSize, blockSize>>>(
+   devGray, hist, width);
+   for (int i=0; i<255; i++){
+      printf("%d pixel sont %d |",hist[i],i);
+   }
+   equalization<<<gridSize, blockSize>>>(hist, eqHist, pixelCount);
+   printf("\n\n\n\n\n");
+   for (int i=0; i<255; i++){
+      printf("%d pixel sont %d |",eqHist[i],i);
+   }
+   cudaMemcpy(outputImage, devOutput,
+   pixelCount * sizeof(uchar3),
+   cudaMemcpyDeviceToHost);
+   cudaFree(devInput);
+   cudaFree(devGray);  
+   cudaFree(devOutput); 
 }
 
 void Labwork::labwork10_GPU() {
